@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>yt-transcribe — YouTube → transcript</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.5 system-ui, sans-serif; background: #0f1115; color: #e6e9ef;
+         margin: 0; display: flex; justify-content: center; min-height: 100vh; }
+  main { width: min(860px, 94vw); padding: 2rem 0 4rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  p.sub { color: #9aa3b2; margin: 0 0 1.5rem; }
+  form { display: flex; gap: .5rem; flex-wrap: wrap; }
+  input[type=url], select { background: #171a21; color: #e6e9ef; border: 1px solid #2a2f3a;
+         border-radius: 8px; padding: .6rem .8rem; font-size: 1rem; }
+  input[type=url] { flex: 1 1 340px; }
+  button { background: #2563eb; color: #fff; border: 0; border-radius: 8px;
+           padding: .6rem 1.1rem; font-size: 1rem; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { margin: 1.2rem 0; padding: .8rem 1rem; border-radius: 8px; display: none; }
+  #status.info { display: block; background: #172136; }
+  #status.err  { display: block; background: #3a1a1a; }
+  .bar { height: 6px; background: #2a2f3a; border-radius: 3px; overflow: hidden; margin-top: .5rem; }
+  .bar i { display: block; height: 100%; width: 30%; background: #2563eb;
+           animation: slide 1.2s infinite linear; }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+  #result { display: none; }
+  .dl { display: flex; gap: .5rem; margin: 1rem 0; flex-wrap: wrap; }
+  .dl a { color: #93c5fd; text-decoration: none; border: 1px solid #2a2f3a;
+          padding: .35rem .8rem; border-radius: 6px; }
+  .dl a:hover { border-color: #2563eb; }
+  pre { background: #171a21; border: 1px solid #2a2f3a; border-radius: 8px;
+        padding: 1rem; white-space: pre-wrap; max-height: 60vh; overflow: auto; }
+  .meta { color: #9aa3b2; font-size: .85rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>yt-transcribe</h1>
+  <p class="sub">Paste a YouTube URL — transcribed on local GPUs (faster-whisper large-v3).</p>
+
+  <form id="f">
+    <input type="url" id="url" placeholder="https://www.youtube.com/watch?v=…" required>
+    <select id="lang">
+      <option value="">auto-detect language</option>
+      <option value="en">English</option>
+      <option value="hu">Magyar</option>
+      <option value="de">Deutsch</option>
+      <option value="es">Español</option>
+    </select>
+    <button id="go" type="submit">Transcribe</button>
+  </form>
+
+  <div id="status"></div>
+
+  <div id="result">
+    <div class="dl" id="dl"></div>
+    <p class="meta" id="meta"></p>
+    <pre id="text"></pre>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let timer = null;
+
+function setStatus(cls, html) {
+  const s = $('status'); s.className = cls; s.innerHTML = html;
+}
+
+$('f').addEventListener('submit', async e => {
+  e.preventDefault();
+  $('go').disabled = true; $('result').style.display = 'none';
+  setStatus('info', 'Submitting job…<div class="bar"><i></i></div>');
+  try {
+    const r = await fetch('/api/transcribe', {
+      method: 'POST', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({url: $('url').value, language: $('lang').value || null})
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+    poll(d.job_id);
+  } catch (err) { setStatus('err', '✗ ' + err.message); $('go').disabled = false; }
+});
+
+async function poll(id) {
+  const t0 = Date.now();
+  timer = setInterval(async () => {
+    try {
+      const r = await fetch('/api/jobs/' + id);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+      const secs = Math.round((Date.now() - t0) / 1000);
+      if (d.status === 'done') { clearInterval(timer); show(d, secs); }
+      else if (d.status === 'error') {
+        clearInterval(timer);
+        setStatus('err', '✗ ' + (d.error || 'job failed')); $('go').disabled = false;
+      } else {
+        setStatus('info', (d.status === 'running' ? 'Transcribing…' : 'Queued…') +
+          ` <span class="meta">(${secs}s)</span><div class="bar"><i></i></div>`);
+      }
+    } catch (err) {
+      clearInterval(timer); setStatus('err', '✗ ' + err.message); $('go').disabled = false;
+    }
+  }, 2500);
+}
+
+async function show(d, secs) {
+  setStatus('info', `✓ Done in ${secs}s — ${d.segments ?? '?'} segments, language: ${d.language ?? '?'}`);
+  $('dl').innerHTML = ['text','srt','vtt','json'].map(f =>
+    `<a href="/api/jobs/${d.job_id}/${f}" target="_blank">${f}</a>
+     <a href="/api/jobs/${d.job_id}/${f}?download=1">⬇ ${f}</a>`).join('');
+  $('meta').textContent = d.title || '';
+  const r = await fetch(`/api/jobs/${d.job_id}/text`);
+  $('text').textContent = await r.text();
+  $('result').style.display = 'block'; $('go').disabled = false;
+}
+</script>
+</body>
+</html>
