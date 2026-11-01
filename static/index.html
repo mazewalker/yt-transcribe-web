@@ -93,7 +93,7 @@ async function poll(id) {
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
       const secs = Math.round((Date.now() - t0) / 1000);
-      if (d.status === 'done') { clearInterval(timer); show(d, secs); }
+      if (d.status === 'done') { clearInterval(timer); show(d, secs, id); }
       else if (d.status === 'error') {
         clearInterval(timer);
         setStatus('err', '✗ ' + (d.error || 'job failed')); $('go').disabled = false;
@@ -107,13 +107,13 @@ async function poll(id) {
   }, 2500);
 }
 
-async function show(d, secs) {
+async function show(d, secs, id) {
   setStatus('info', `✓ Done in ${secs}s — ${d.segments ?? '?'} segments, language: ${d.language ?? '?'}`);
   $('dl').innerHTML = ['text','srt','vtt','json'].map(f =>
-    `<a href="/api/jobs/${d.job_id}/${f}" target="_blank">${f}</a>
-     <a href="/api/jobs/${d.job_id}/${f}?download=1">⬇ ${f}</a>`).join('');
+    `<a href="/api/jobs/${id}/${f}" target="_blank">${f}</a>
+     <a href="/api/jobs/${id}/${f}?download=1">⬇ ${f}</a>`).join('');
   $('meta').textContent = d.title || '';
-  const r = await fetch(`/api/jobs/${d.job_id}/text`);
+  const r = await fetch(`/api/jobs/${id}/text`);
   $('text').textContent = await r.text();
   $('result').style.display = 'block'; $('go').disabled = false;
 }
